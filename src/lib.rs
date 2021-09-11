@@ -1,14 +1,15 @@
 #![warn(
-    unreachable_pub,
-    trivial_casts,
-    trivial_numeric_casts,
-    unused_extern_crates,
-    rust_2018_idioms
+unreachable_pub,
+trivial_casts,
+trivial_numeric_casts,
+unused_extern_crates,
+rust_2018_idioms
 )]
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{WebGl2RenderingContext, WebGlProgram, WebGlShader};
+use web_sys::console;
 
 pub mod solver;
 
@@ -63,7 +64,7 @@ impl Simulation {
             .state
             .particles
             .iter()
-            .map(|p| p.position().to_array())
+            .map(|p| p.to_array())
             .flatten()
             .collect();
         unsafe {
@@ -75,19 +76,18 @@ impl Simulation {
             //
             // As a result, after `Float32Array::view` we have to be very careful not to
             // do any memory allocations before it's dropped.
-            let positions_array_buf_view = js_sys::Float32Array::view(&vertices);
+            let view = js_sys::Float32Array::view(&vertices);
 
-            self.context.buffer_sub_data_with_i32_and_array_buffer_view(
+            self.context.buffer_data_with_array_buffer_view(
                 WebGl2RenderingContext::ARRAY_BUFFER,
-                0,
-                &positions_array_buf_view,
+                &view,
+                WebGl2RenderingContext::DYNAMIC_DRAW,
             );
         }
 
-        let vert_count = (vertices.len() / 2) as i32;
+        let vert_count = self.state.particles.len() as i32;
         self.context.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
-        self.context
-            .draw_arrays(WebGl2RenderingContext::POINTS, 0, vert_count);
+        self.context.draw_arrays(WebGl2RenderingContext::POINTS, 0, vert_count);
     }
 }
 
@@ -107,16 +107,20 @@ fn init_webgl(canvas: &web_sys::HtmlCanvasElement) -> Result<WebGl2RenderingCont
         WebGl2RenderingContext::VERTEX_SHADER,
         format!(
             r##"#version 300 es
+        precision highp float;
         uniform mat4 matrix;
         in vec2 position;
+        in vec3 color;
+        out vec3 v_color;
         void main() {{
             gl_PointSize = {:.1};
             gl_Position = matrix * vec4(position, 0.0, 1.0);
+            v_color = color;
         }}
         "##,
             POINT_SIZE
         )
-        .as_str(),
+            .as_str(),
     )?;
 
     let frag_shader = compile_shader(
@@ -124,9 +128,10 @@ fn init_webgl(canvas: &web_sys::HtmlCanvasElement) -> Result<WebGl2RenderingCont
         WebGl2RenderingContext::FRAGMENT_SHADER,
         r##"#version 300 es
         precision highp float;
-        out vec4 outColor;
+        in vec3 v_color;
+        out vec4 fragColor;
         void main() {{
-            outColor = vec4(0.2, 0.6, 1.0, 1.0);
+            fragColor = vec4(v_color, 1.0);
         }}
         "##,
     )?;
@@ -138,6 +143,8 @@ fn init_webgl(canvas: &web_sys::HtmlCanvasElement) -> Result<WebGl2RenderingCont
         .get_uniform_location(&program, "matrix")
         .expect("Unable to get shader projection matrix uniform location");
     let ortho_matrix = cgmath::ortho(0.0, solver::VIEW_WIDTH, 0.0, solver::VIEW_HEIGHT, 0.0, 1.0);
+    console::log_1(&format!("ortho_matrix: {:?}", ortho_matrix).into());
+
     let ortho_matrix_flattened_ref: &[f32; 16] = ortho_matrix.as_ref();
     context.uniform_matrix4fv_with_f32_array(
         Some(&uniform_location),
@@ -145,15 +152,28 @@ fn init_webgl(canvas: &web_sys::HtmlCanvasElement) -> Result<WebGl2RenderingCont
         ortho_matrix_flattened_ref,
     );
 
-    // attributes
-    let position_attribute_location = context.get_attrib_location(&program, "position");
+
     let buffer = context.create_buffer().ok_or("Failed to create buffer")?;
     context.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&buffer));
-    context.vertex_attrib_pointer_with_i32(0, 2, WebGl2RenderingContext::FLOAT, false, 0, 0);
-    context.enable_vertex_attrib_array(position_attribute_location as u32);
+
+    // attributes
+    let position_attribute_location = context.get_attrib_location(&program, "position") as u32;
+    let color_attribute_location = context.get_attrib_location(&program, "color") as u32;
+
+    context.enable_vertex_attrib_array(position_attribute_location);
+    context.enable_vertex_attrib_array(color_attribute_location);
+
+    let offset = std::mem::size_of::<js_sys::Float32Array>() as i32;
+    let stride = 5 * offset;
+    context.vertex_attrib_pointer_with_i32(position_attribute_location, 2, WebGl2RenderingContext::FLOAT, false, stride, 0);
+    context.vertex_attrib_pointer_with_i32(color_attribute_location, 3, WebGl2RenderingContext::FLOAT, false, stride, 2 * offset);
+
+
 
     // allocate vertex buffer initial state
-    let zeroed = vec![0.0; MAX_PARTICLES * 2];
+    let zeroed = vec![0.0; MAX_PARTICLES * 5];
+    console::log_1(&"allocate vertex buffer initial state".into());
+
     unsafe {
         let positions_array_buf_view = js_sys::Float32Array::view(&zeroed);
 
@@ -163,6 +183,7 @@ fn init_webgl(canvas: &web_sys::HtmlCanvasElement) -> Result<WebGl2RenderingCont
             WebGl2RenderingContext::DYNAMIC_DRAW,
         );
     }
+    console::log_1(&"allocate vertex buffer initial state success".into());
     Ok(context)
 }
 

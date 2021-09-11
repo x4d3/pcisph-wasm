@@ -33,7 +33,7 @@ const GRID_HEIGHT: usize = (VIEW_HEIGHT / CELL_SIZE) as usize;
 const NUM_CELLS: usize = GRID_WIDTH * GRID_HEIGHT;
 const NUM_NEIGHBORS: usize = 64;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone , Copy, Default)]
 pub struct Particle {
     x: Vec2,
     xlast: Vec2,
@@ -44,6 +44,7 @@ pub struct Particle {
     d: f32,
     dv: f32,
     grid_index: UVec2,
+    c: Vec3,
 }
 
 impl Particle {
@@ -51,14 +52,16 @@ impl Particle {
         Self {
             x: Vec2::new(x, y),
             m: 1.0,
+            c: Vec3::new( js_sys::Math::random() as f32, js_sys::Math::random() as f32, js_sys::Math::random() as f32),
             ..Default::default()
         }
     }
 
     #[inline(always)]
-    pub fn position(&self) -> Vec2 {
-        self.x
+    pub fn to_array(&self) -> [f32;5] {
+        [self.x.x, self.x.y, self.c.x, self.c.y, self.c.z]
     }
+
 }
 
 #[derive(Debug, Default)]
